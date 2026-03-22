@@ -1,0 +1,22 @@
+cd ~/Загрузки/klish-build
+cat > .gitignore << 'EOF'
+# Собранные файлы
+build_root/
+build_output/
+config_output/
+klish-build-*/
+downloads/
+
+# Исходники (загружать не нужно, они скачаются при сборке)
+src/
+
+# Логи
+*.log
+*.txt
+
+# Временные файлы
+*.swp
+*.swo
+*~
+.DS_Store
+EOF

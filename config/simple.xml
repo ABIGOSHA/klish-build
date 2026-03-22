@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<KLISH xmlns="https://klish.libcode.org/klish3">
+    <!-- Загружаем плагины -->
+    <PLUGIN name="klish" file="/usr/lib/libklish-plugin-klish.so"/>
+    <PLUGIN name="script" file="/usr/lib/libklish-plugin-script.so"/>
+
+    <!-- Корневой элемент, с которого начинается навигация -->
+    <ENTRY name="main" mode="switch" container="true">
+        <!-- Простые команды для Raspberry Pi -->
+        <ENTRY name="show" mode="switch" container="true">
+            <ENTRY name="system" help="Показать системную информацию">
+                <ACTION sym="script">uname -a</ACTION>
+            </ENTRY>
+            
+            <ENTRY name="cpu" help="Показать информацию о CPU">
+                <ACTION sym="script">cat /proc/cpuinfo | grep -E "model name|Hardware"</ACTION>
+            </ENTRY>
+            
+            <ENTRY name="memory" help="Показать использование памяти">
+                <ACTION sym="script">free -h</ACTION>
+            </ENTRY>
+            
+            <ENTRY name="temperature" help="Показать температуру CPU">
+                <ACTION sym="script">vcgencmd measure_temp</ACTION>
+            </ENTRY>
+        </ENTRY>
+        
+        <ENTRY name="exit" help="Выйти из интерфейса">
+            <ACTION sym="nav">pop</ACTION>
+        </ENTRY>
+    </ENTRY>
+</KLISH>
