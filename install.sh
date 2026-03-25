@@ -29,6 +29,15 @@ fi
 
 echo "Установка klish из $FINAL_DIR"
 
+# --- Проверка наличия библиотек ---
+echo "=== Проверка собранных библиотек ==="
+if [ -d "$FINAL_DIR/lib" ]; then
+    echo "Библиотеки в $FINAL_DIR/lib:"
+    ls -la "$FINAL_DIR/lib" | grep -E "libklish|libxml2|libtinyrl" || echo "  (нет библиотек klish)"
+else
+    echo "Предупреждение: папка lib не найдена в $FINAL_DIR"
+fi
+
 # --- Бэкап существующих конфигов (опционально) ---
 BACKUP_DIR="/root/klish_backup_$(date +%Y%m%d_%H%M%S)"
 if [ -d "/etc/klish" ] && [ "$(ls -A /etc/klish 2>/dev/null)" ]; then
@@ -43,14 +52,21 @@ if [ -d "$FINAL_DIR/bin" ]; then
     cp -v "$FINAL_DIR"/bin/* /usr/local/bin/
 fi
 
-# --- Копирование библиотек ---
+# --- Копирование библиотек в /usr/lib ---
 if [ -d "$FINAL_DIR/lib" ]; then
-    echo "Копирование библиотек..."
-    cp -v "$FINAL_DIR"/lib/* /usr/local/lib/
+    echo "Копирование библиотек в /usr/lib..."
+    
+    # Копируем все библиотеки
+    cp -v "$FINAL_DIR"/lib/*.so* /usr/lib/ 2>/dev/null || true
+    cp -v "$FINAL_DIR"/lib/*.a /usr/lib/ 2>/dev/null || true
     
     # Обновляем кэш библиотек
     echo "Обновление кэша библиотек..."
     ldconfig
+    
+    # Проверка, что библиотеки скопированы
+    echo "Проверка библиотек в /usr/lib:"
+    ls -la /usr/lib | grep -E "libklish|libxml2|libtinyrl" | head -10 || echo "  (библиотеки не найдены)"
 fi
 
 # --- Копирование конфигурации ---
@@ -75,19 +91,29 @@ if [ -f "/etc/klish/klishd.conf" ]; then
         echo "Добавление UnixSocketMode=0666 в конфиг..."
         echo "UnixSocketMode=0666" >> /etc/klish/klishd.conf
     fi
+    
+    # Проверка пути к XML
+    if grep -q "DBs=libxml2" /etc/klish/klishd.conf; then
+        XML_PATH=$(grep "DB.libxml2.XMLPath" /etc/klish/klishd.conf | cut -d= -f2)
+        if [ -n "$XML_PATH" ] && [ ! -f "$XML_PATH" ]; then
+            echo "Предупреждение: XML-файл не найден по пути: $XML_PATH"
+            echo "Проверьте конфигурацию в /etc/klish/klishd.conf"
+        fi
+    fi
 fi
 
 # --- Создание systemd unit для автозапуска ---
 if [ -f /usr/local/bin/klishd ]; then
-    if [ ! -f /etc/systemd/system/klishd.service ]; then
-        echo "Создание systemd unit для klishd..."
-        cat > /etc/systemd/system/klishd.service << EOF
+    echo "Создание systemd unit для klishd..."
+    cat > /etc/systemd/system/klishd.service << 'EOF'
 [Unit]
 Description=Klish Configuration Daemon
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/klishd
+Type=simple
+ExecStart=/usr/local/bin/klishd -d
+ExecStartPost=/bin/chmod 666 /tmp/klishd.sock
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -96,14 +122,13 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
-        systemctl daemon-reload
-        echo ""
-        echo "Для автозапуска выполните: systemctl enable klishd"
-        echo "Для запуска сейчас: systemctl start klishd"
-    else
-        echo "systemd unit уже существует. Для пересоздания удалите:"
-        echo "  sudo rm /etc/systemd/system/klishd.service"
-    fi
+    systemctl daemon-reload
+    systemctl restart klishd.service
+    echo ""
+    echo "Для автозапуска выполните: systemctl enable klishd"
+    echo "Для запуска сейчас: systemctl start klishd"
+else
+    echo "Предупреждение: klishd не найден, systemd unit не создан"
 fi
 
 # --- Проверка установки ---
@@ -121,6 +146,34 @@ else
     echo "❌ klish не найден в PATH"
 fi
 
+# Проверка библиотек (только разделяемые)
+echo ""
+echo "=== Проверка библиотек ==="
+for lib in libklish.so libklish-db-libxml2.so libxml2.so; do
+    if ldconfig -p | grep -q "$lib"; then
+        echo "✅ $lib найден"
+    else
+        echo "❌ $lib не найден в кэше библиотек"
+    fi
+done
+
+# Проверка плагина libxml2
+if [ -f "/usr/lib/libklish-db-libxml2.so" ]; then
+    echo "✅ Плагин libxml2 установлен"
+else
+    echo "❌ Плагин libxml2 не найден в /usr/lib/"
+    echo "   Возможно, нужно пересобрать klish с --with-libxml2"
+fi
+
+# --- Установка FreeRADIUS (опционально) ---
+if [ -f "$FINAL_DIR/install_radius.sh" ]; then
+    echo ""
+    echo "=== FreeRADIUS ==="
+    echo "Для установки FreeRADIUS выполните:"
+    echo "  cd $FINAL_DIR && sudo ./install_radius.sh"
+    echo ""
+fi
+
 echo ""
 echo "=== Установка завершена ==="
 echo ""
@@ -133,3 +186,7 @@ echo ""
 echo "Для автозапуска при загрузке:"
 echo "  sudo systemctl enable klishd"
 echo "  sudo systemctl start klishd"
+echo ""
+echo "Если демон не запускается с ошибкой 'libklish-db-libxml2.so: cannot open':"
+echo "  sudo ldconfig"
+echo "  sudo klishd -d"

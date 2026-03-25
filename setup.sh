@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup.sh - Подготовка окружения: установка системных зависимостей и сборка faux
+# setup.sh - Подготовка окружения: сборка libxml2, faux и установка FreeRADIUS через apt
 
 set -e  # Прерывать выполнение при ошибке
 
@@ -85,23 +85,22 @@ clone_or_update_repo() {
     fi
 }
 
-# --- 0. Установка системных зависимостей ---
-echo "=== Шаг 0: Установка системных зависимостей ==="
+# --- 0. Установка системных зависимостей для сборки ---
+echo "=== Шаг 0: Установка инструментов сборки и FreeRADIUS ==="
 
-if [ $IS_CROSS -eq 0 ]; then
-    # Нативная сборка
-    sudo apt update
-    sudo apt install -y libxml2-dev libxml2 pkg-config
-else
-    # Кросс-компиляция: собираем libxml2 из исходников
-    echo "Кросс-компиляция: libxml2 будет собрана из исходников"
-    LIBXML2_URL="https://download.gnome.org/sources/libxml2/2.12/libxml2-2.12.6.tar.xz"
-    download_if_needed "$LIBXML2_URL"
-    extract_if_needed "libxml2-2.12.6.tar.xz" "libxml2-2.12.6"
-fi
+# Устанавливаем инструменты сборки и зависимости
+sudo apt update
+sudo apt install -y build-essential git wget pkg-config autoconf automake libtool \
+    libtalloc-dev libssl-dev libpam0g-dev libmysqlclient-dev libpq-dev libsqlite3-dev \
+    freeradius freeradius-mysql freeradius-utils
 
 # --- 1. Скачивание исходных кодов ---
 echo "=== Шаг 1: Скачивание исходных кодов ==="
+
+# libxml2 (всегда собираем из исходников)
+LIBXML2_URL="https://download.gnome.org/sources/libxml2/2.12/libxml2-2.12.6.tar.xz"
+download_if_needed "$LIBXML2_URL"
+extract_if_needed "libxml2-2.12.6.tar.xz" "libxml2-2.12.6"
 
 # faux (клонирование репозитория)
 FAUX_REPO="https://src.libcode.org/pkun/faux.git"
@@ -115,7 +114,7 @@ download_if_needed "$KLISH_URL"
 extract_tarball "$KLISH_ARCHIVE" "$KLISH_DIR"
 
 # --- 2. Сборка зависимостей для целевой архитектуры ---
-echo "=== Шаг 2: Сборка зависимостей ==="
+echo "=== Шаг 2: Сборка зависимостей (libxml2, faux) ==="
 
 # Установка переменных окружения
 export CFLAGS="-I$PREFIX/include"
@@ -123,21 +122,19 @@ export LDFLAGS="-L$PREFIX/lib"
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
 export PATH="$PREFIX/bin:$PATH"
 
-# Сборка libxml2 (если кросс-компиляция)
-if [ $IS_CROSS -eq 1 ]; then
-    echo "Компиляция libxml2 для $TARGET_ARCH..."
-    cd "$SRC_DIR/libxml2-2.12.6"
-    ./configure --prefix="$PREFIX" --host="$TARGET_ARCH" --without-python --disable-static
-    make -j$(nproc)
-    make install
-    # Проверка успешности
-    if [ ! -f "$PREFIX/lib/libxml2.so" ] && [ ! -f "$PREFIX/lib/libxml2.a" ]; then
-        echo "Ошибка: libxml2 не собралась"
-        exit 1
-    fi
-    cd - > /dev/null
-    echo "✅ libxml2 собрана"
+# Сборка libxml2
+echo "Компиляция libxml2 для $TARGET_ARCH..."
+cd "$SRC_DIR/libxml2-2.12.6"
+./configure --prefix="$PREFIX" --host="$TARGET_ARCH" --without-python --disable-static
+make -j$(nproc)
+make install
+# Проверка успешности
+if [ ! -f "$PREFIX/lib/libxml2.so" ] && [ ! -f "$PREFIX/lib/libxml2.a" ]; then
+    echo "Ошибка: libxml2 не собралась"
+    exit 1
 fi
+cd - > /dev/null
+echo "✅ libxml2 собрана"
 
 # Сборка faux
 echo "Компиляция faux для $TARGET_ARCH..."
@@ -162,6 +159,9 @@ echo ""
 echo "📦 Зависимости собраны и установлены в: $PREFIX"
 echo "   - libxml2: $(ls $PREFIX/lib/libxml2.* 2>/dev/null | head -1 || echo 'не найдена')"
 echo "   - faux: $(ls $PREFIX/lib/libfaux.* 2>/dev/null | head -1 || echo 'не найдена')"
+echo ""
+echo "📦 FreeRADIUS установлен через apt:"
+echo "   - $(freeradius -v 2>/dev/null | head -1 || echo 'проверьте установку')"
 echo ""
 echo "📁 Исходники klish-3.2.0: $SRC_DIR/klish-3.2.0"
 echo ""

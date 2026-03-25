@@ -1,32 +1,56 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<KLISH xmlns="https://klish.libcode.org/klish3">
-    <!-- Загружаем плагины -->
-    <PLUGIN name="klish" file="/usr/lib/libklish-plugin-klish.so"/>
-    <PLUGIN name="script" file="/usr/lib/libklish-plugin-script.so"/>
+<KLISH
+        xmlns="https://klish.libcode.org/klish3"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="https://src.libcode.org/pkun/klish/src/master/klish.xsd">
 
-    <!-- Корневой элемент, с которого начинается навигация -->
-    <ENTRY name="main" mode="switch" container="true">
-        <!-- Простые команды для Raspberry Pi -->
-        <ENTRY name="show" mode="switch" container="true">
-            <ENTRY name="system" help="Показать системную информацию">
-                <ACTION sym="script">uname -a</ACTION>
-            </ENTRY>
-            
-            <ENTRY name="cpu" help="Показать информацию о CPU">
-                <ACTION sym="script">cat /proc/cpuinfo | grep -E "model name|Hardware"</ACTION>
-            </ENTRY>
-            
-            <ENTRY name="memory" help="Показать использование памяти">
-                <ACTION sym="script">free -h</ACTION>
-            </ENTRY>
-            
-            <ENTRY name="temperature" help="Показать температуру CPU">
-                <ACTION sym="script">vcgencmd measure_temp</ACTION>
-            </ENTRY>
-        </ENTRY>
-        
-        <ENTRY name="exit" help="Выйти из интерфейса">
-            <ACTION sym="nav">pop</ACTION>
-        </ENTRY>
-    </ENTRY>
+<PLUGIN name="klish"/>
+
+<PLUGIN name="script"/>
+
+
+<PTYPE name="STRING">
+        <ACTION sym="STRING@klish"/>
+</PTYPE>
+
+
+<VIEW name="main">
+
+<HOTKEY key="^Z" cmd="exit"/>
+
+<PROMPT name="prompt">
+        <ACTION sym="prompt">%u@%h&gt; </ACTION>
+</PROMPT>
+
+<COMMAND name="exit" help="Exit view">
+        <ACTION sym="nav">pop</ACTION>
+        <ACTION sym="printl">Exiting klish session</ACTION>
+</COMMAND>
+
+<COMMAND name="cmd" help="Clear settings">
+        <COMMAND name="first" help="Clear settings"/>
+        <ACTION sym="printl">test</ACTION>
+</COMMAND>
+
+<COMMAND name="comm" value="command" help="Clear settings">
+        <ACTION sym="printl">test2</ACTION>
+</COMMAND>
+
+<COMMAND name="ls" help="List path">
+        <PARAM name="path" ptype="/STRING" help="Path"/>
+        <ACTION sym="script">
+        echo "$KLISH_COMMAND"
+        ls "$KLISH_PARAM_path"
+        </ACTION>
+</COMMAND>
+
+<COMMAND name="pytest" help="Test for Python script">
+        <ACTION sym="script">#!/usr/bin/python3
+import os
+print('ENV', os.getenv("KLISH_COMMAND"))
+        </ACTION>
+</COMMAND>
+
+</VIEW>
+
 </KLISH>
