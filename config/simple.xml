@@ -5,50 +5,396 @@
         xsi:schemaLocation="https://src.libcode.org/pkun/klish/src/master/klish.xsd">
 
 <PLUGIN name="klish"/>
-
 <PLUGIN name="script"/>
 
-
+<!-- ==================== Базовые типы ==================== -->
 <PTYPE name="STRING">
         <ACTION sym="STRING@klish"/>
 </PTYPE>
 
+<PTYPE name="PORT_NUM">
+        <ACTION sym="STRING@klish"/>
+</PTYPE>
 
+<PTYPE name="VLAN_ID">
+        <ACTION sym="STRING@klish"/>
+</PTYPE>
+
+<PTYPE name="SPEED">
+        <ACTION sym="STRING@klish"/>
+</PTYPE>
+
+<PTYPE name="DUPLEX">
+        <ACTION sym="STRING@klish"/>
+</PTYPE>
+
+<PTYPE name="LACP_MODE">
+        <ACTION sym="STRING@klish"/>
+</PTYPE>
+
+<!-- ==================== VIEW: enable ==================== -->
 <VIEW name="main">
 
-<HOTKEY key="^Z" cmd="exit"/>
-
 <PROMPT name="prompt">
-        <ACTION sym="prompt">%u@%h&gt; </ACTION>
+        <ACTION sym="prompt">%u@%h# </ACTION>
 </PROMPT>
 
-<COMMAND name="exit" help="Exit view">
+<!-- ==================== Диагностические команды ==================== -->
+<COMMAND name="show" help="Show system information">
+        <COMMAND name="version" help="Show system version">
+                <ACTION sym="script">cat /etc/os-release | head -3; uname -a</ACTION>
+        </COMMAND>
+        
+        <COMMAND name="running-config" help="Show current running configuration">
+                <ACTION sym="script">cat /etc/klish/switch.cfg 2>/dev/null || echo "No config file"</ACTION>
+        </COMMAND>
+        
+        <COMMAND name="interfaces" help="Show interface status">
+                <ACTION sym="script">ip link show | grep -E "^[0-9]+:"</ACTION>
+        </COMMAND>
+        
+        <COMMAND name="interface" help="Show specific interface details">
+                <PARAM name="iface" ptype="STRING" help="Interface name (eth0, eth1, etc)"/>
+                <ACTION sym="script">ip addr show ${iface} 2>/dev/null || echo "Interface ${iface} not found"</ACTION>
+        </COMMAND>
+        
+        <COMMAND name="mac-address-table" help="Show MAC address table">
+                <ACTION sym="script">bridge fdb show 2>/dev/null || echo "Bridge not configured"</ACTION>
+        </COMMAND>
+        
+        <COMMAND name="arp" help="Show ARP table">
+                <ACTION sym="script">ip neigh show</ACTION>
+        </COMMAND>
+        
+        <COMMAND name="statistics" help="Show interface statistics">
+                <COMMAND name="all" help="Show all interfaces statistics">
+                        <ACTION sym="script">ip -s link show</ACTION>
+                </COMMAND>
+                <COMMAND name="interface" help="Show statistics for specific interface">
+                        <PARAM name="iface" ptype="STRING" help="Interface name"/>
+                        <ACTION sym="script">ip -s link show ${iface} 2>/dev/null || echo "Interface ${iface} not found"</ACTION>
+                </COMMAND>
+        </COMMAND>
+        
+        <COMMAND name="vlan" help="Show VLAN information">
+                <ACTION sym="script">ip link show type vlan 2>/dev/null || echo "No VLANs configured"</ACTION>
+        </COMMAND>
+        
+        <COMMAND name="lacp" help="Show LACP status">
+                <ACTION sym="script">cat /proc/net/bonding/bond0 2>/dev/null || echo "No LACP bond configured"</ACTION>
+        </COMMAND>
+</COMMAND>
+
+<!-- ==================== Команды диагностики ==================== -->
+<COMMAND name="ping" help="Ping a host">
+        <PARAM name="host" ptype="STRING" help="IP address"/>
+        <ACTION sym="script">ping -c 4 ${host}</ACTION>
+</COMMAND>
+
+<COMMAND name="traceroute" help="Trace route to host">
+        <PARAM name="host" ptype="STRING" help="IP address"/>
+        <ACTION sym="script">traceroute -n ${host}</ACTION>
+</COMMAND>
+
+<COMMAND name="clear" help="Clear counters or tables">
+        <COMMAND name="arp" help="Clear ARP cache">
+                <ACTION sym="script">ip neigh flush all</ACTION>
+        </COMMAND>
+        <COMMAND name="mac-address-table" help="Clear MAC address table">
+                <ACTION sym="script">bridge fdb flush 2>/dev/null || echo "Bridge not configured"</ACTION>
+        </COMMAND>
+</COMMAND>
+
+<!-- ==================== Команды настройки портов ==================== -->
+<COMMAND name="interface" help="Configure interface">
+        <PARAM name="iface" ptype="STRING" help="Interface name (eth0, eth1, etc)"/>
+        <COMMAND name="shutdown" help="Disable interface">
+                <ACTION sym="script">ip link set ${iface} down</ACTION>
+        </COMMAND>
+        <COMMAND name="no shutdown" help="Enable interface">
+                <ACTION sym="script">ip link set ${iface} up</ACTION>
+        </COMMAND>
+        <COMMAND name="description" help="Set interface description">
+                <PARAM name="text" ptype="STRING" help="Description text"/>
+                <ACTION sym="script">echo "interface ${iface} description ${text}" >> /etc/klish/switch.cfg</ACTION>
+        </COMMAND>
+        <COMMAND name="speed" help="Set interface speed">
+                <PARAM name="value" ptype="SPEED" help="10, 100, 1000, auto"/>
+                <ACTION sym="script">ethtool -s ${iface} speed ${value} 2>/dev/null || echo "ethtool not available"</ACTION>
+        </COMMAND>
+        <COMMAND name="duplex" help="Set interface duplex mode">
+                <PARAM name="mode" ptype="DUPLEX" help="full, half, auto"/>
+                <ACTION sym="script">ethtool -s ${iface} duplex ${mode} 2>/dev/null || echo "ethtool not available"</ACTION>
+        </COMMAND>
+        <COMMAND name="mtu" help="Set MTU size">
+                <PARAM name="size" ptype="PORT_NUM" help="MTU size (68-1500)"/>
+                <ACTION sym="script">ip link set ${iface} mtu ${size}</ACTION>
+        </COMMAND>
+</COMMAND>
+
+<!-- ==================== Команды настройки VLAN ==================== -->
+<COMMAND name="vlan" help="Configure VLAN">
+        <PARAM name="vlan_id" ptype="VLAN_ID" help="VLAN ID (1-4094)"/>
+        <COMMAND name="name" help="Set VLAN name">
+                <PARAM name="vlan_name" ptype="STRING" help="VLAN name"/>
+                <ACTION sym="script">echo "vlan ${vlan_id} name ${vlan_name}" >> /etc/klish/switch.cfg</ACTION>
+        </COMMAND>
+        <COMMAND name="interface" help="Add interface to VLAN">
+                <PARAM name="iface" ptype="STRING" help="Interface name"/>
+                <COMMAND name="access" help="Set as access port">
+                        <ACTION sym="script">bridge vlan add dev ${iface} vid ${vlan_id} pvid untagged 2>/dev/null || echo "Bridge not configured"</ACTION>
+                </COMMAND>
+                <COMMAND name="trunk" help="Set as trunk port">
+                        <ACTION sym="script">bridge vlan add dev ${iface} vid ${vlan_id} 2>/dev/null || echo "Bridge not configured"</ACTION>
+                </COMMAND>
+        </COMMAND>
+        <COMMAND name="ip" help="Configure VLAN interface IP">
+                <PARAM name="address" ptype="STRING" help="IP address"/>
+                <PARAM name="mask" ptype="STRING" help="Netmask"/>
+                <ACTION sym="script">ip addr add ${address}/${mask} dev vlan${vlan_id}</ACTION>
+        </COMMAND>
+        <COMMAND name="no" help="Remove VLAN">
+                <COMMAND name="shutdown" help="Disable VLAN">
+                        <ACTION sym="script">ip link set vlan${vlan_id} down 2>/dev/null || echo "VLAN not found"</ACTION>
+                </COMMAND>
+                <COMMAND name="interface" help="Remove interface from VLAN">
+                        <PARAM name="iface" ptype="STRING" help="Interface name"/>
+                        <ACTION sym="script">bridge vlan del dev ${iface} vid ${vlan_id} 2>/dev/null || echo "Not in VLAN"</ACTION>
+                </COMMAND>
+        </COMMAND>
+</COMMAND>
+
+<!-- ==================== Команды настройки LACP ==================== -->
+<COMMAND name="lacp" help="Configure LACP bond">
+        <COMMAND name="bond" help="Create bond interface">
+                <PARAM name="bond_id" ptype="PORT_NUM" help="Bond ID (0-9)"/>
+                <COMMAND name="mode" help="Set bond mode">
+                        <PARAM name="mode" ptype="LACP_MODE" help="active or passive"/>
+                        <ACTION sym="script">echo "bond${bond_id} mode 4 lacp_rate ${mode}" >> /etc/klish/switch.cfg</ACTION>
+                </COMMAND>
+                <COMMAND name="interface" help="Add interface to bond">
+                        <PARAM name="iface" ptype="STRING" help="Interface name"/>
+                        <ACTION sym="script">ip link set ${iface} master bond${bond_id}</ACTION>
+                </COMMAND>
+        </COMMAND>
+        <COMMAND name="no" help="Remove bond">
+                <PARAM name="bond_id" ptype="PORT_NUM" help="Bond ID"/>
+                <COMMAND name="shutdown" help="Disable bond">
+                        <ACTION sym="script">ip link set bond${bond_id} down 2>/dev/null || echo "Bond not found"</ACTION>
+                </COMMAND>
+                <COMMAND name="interface" help="Remove interface from bond">
+                        <PARAM name="iface" ptype="STRING" help="Interface name"/>
+                        <PARAM name="bond_id" ptype="PORT_NUM" help="Bond ID"/>
+                        <ACTION sym="script">ip link set ${iface} nomaster</ACTION>
+                </COMMAND>
+        </COMMAND>
+</COMMAND>
+
+<!-- ==================== Команды сохранения ==================== -->
+<COMMAND name="write" help="Write running configuration to memory">
+        <ACTION sym="script">cp /etc/klish/switch.cfg /etc/klish/startup.cfg; echo "Configuration saved"</ACTION>
+</COMMAND>
+
+<COMMAND name="copy" help="Copy configuration">
+        <COMMAND name="running-config" help="Copy running config to startup config">
+                <COMMAND name="startup-config" help="Save current configuration">
+                        <ACTION sym="script">cp /etc/klish/switch.cfg /etc/klish/startup.cfg; echo "Configuration saved"</ACTION>
+                </COMMAND>
+        </COMMAND>
+</COMMAND>
+
+<!-- ==================== Команды режимов ==================== -->
+<COMMAND name="configure" help="Enter configuration mode">
+        <COMMAND name="terminal" help="Configure from terminal">
+                <ACTION sym="nav">config</ACTION>
+        </COMMAND>
+</COMMAND>
+
+<COMMAND name="exit" help="Exit to user mode">
         <ACTION sym="nav">pop</ACTION>
-        <ACTION sym="printl">Exiting klish session</ACTION>
 </COMMAND>
 
-<COMMAND name="cmd" help="Clear settings">
-        <COMMAND name="first" help="Clear settings"/>
-        <ACTION sym="printl">test</ACTION>
+</VIEW>
+
+<!-- ==================== VIEW: config (режим конфигурации) ==================== -->
+<VIEW name="config">
+
+<PROMPT name="prompt">
+        <ACTION sym="prompt">%u@%h(config)# </ACTION>
+</PROMPT>
+
+<COMMAND name="interface" help="Configure interface">
+        <PARAM name="iface" ptype="STRING" help="Interface name"/>
+        <ACTION sym="nav">config-if-${iface}</ACTION>
 </COMMAND>
 
-<COMMAND name="comm" value="command" help="Clear settings">
-        <ACTION sym="printl">test2</ACTION>
+<COMMAND name="vlan" help="Configure VLAN">
+        <PARAM name="vlan_id" ptype="VLAN_ID" help="VLAN ID"/>
+        <ACTION sym="nav">config-vlan-${vlan_id}</ACTION>
 </COMMAND>
 
-<COMMAND name="ls" help="List path">
-        <PARAM name="path" ptype="/STRING" help="Path"/>
-        <ACTION sym="script">
-        echo "$KLISH_COMMAND"
-        ls "$KLISH_PARAM_path"
-        </ACTION>
+<COMMAND name="lacp" help="Configure LACP bond">
+        <PARAM name="bond_id" ptype="PORT_NUM" help="Bond ID"/>
+        <ACTION sym="nav">config-bond-${bond_id}</ACTION>
 </COMMAND>
 
-<COMMAND name="pytest" help="Test for Python script">
-        <ACTION sym="script">#!/usr/bin/python3
-import os
-print('ENV', os.getenv("KLISH_COMMAND"))
-        </ACTION>
+<COMMAND name="hostname" help="Set system hostname">
+        <PARAM name="name" ptype="STRING" help="Hostname"/>
+        <ACTION sym="script">hostnamectl set-hostname ${name}</ACTION>
+</COMMAND>
+
+<COMMAND name="end" help="Exit configuration mode">
+        <ACTION sym="nav">pop</ACTION>
+</COMMAND>
+
+<COMMAND name="exit" help="Exit configuration mode">
+        <ACTION sym="nav">pop</ACTION>
+</COMMAND>
+
+</VIEW>
+
+<!-- ==================== VIEW: config-if ==================== -->
+<VIEW name="config-if-*">
+
+<PROMPT name="prompt">
+        <ACTION sym="prompt">%u@%h(config-if)# </ACTION>
+</PROMPT>
+
+<COMMAND name="description" help="Set interface description">
+        <PARAM name="text" ptype="STRING" help="Description text"/>
+        <ACTION sym="script">echo "interface ${VIEW_NAME#config-if-} description ${text}" >> /etc/klish/switch.cfg</ACTION>
+</COMMAND>
+
+<COMMAND name="shutdown" help="Disable interface">
+        <ACTION sym="script">ip link set ${VIEW_NAME#config-if-} down</ACTION>
+</COMMAND>
+
+<COMMAND name="no shutdown" help="Enable interface">
+        <ACTION sym="script">ip link set ${VIEW_NAME#config-if-} up</ACTION>
+</COMMAND>
+
+<COMMAND name="switchport" help="Configure switchport mode">
+        <COMMAND name="mode" help="Set switchport mode">
+                <PARAM name="mode" ptype="STRING" help="access or trunk"/>
+                <ACTION sym="script">echo "interface ${VIEW_NAME#config-if-} switchport mode ${mode}" >> /etc/klish/switch.cfg</ACTION>
+        </COMMAND>
+        <COMMAND name="access" help="Set access VLAN">
+                <COMMAND name="vlan" help="Set access VLAN ID">
+                        <PARAM name="vlan_id" ptype="VLAN_ID" help="VLAN ID"/>
+                        <ACTION sym="script">bridge vlan add dev ${VIEW_NAME#config-if-} vid ${vlan_id} pvid untagged 2>/dev/null || echo "Bridge not configured"</ACTION>
+                </COMMAND>
+        </COMMAND>
+        <COMMAND name="trunk" help="Configure trunk VLANs">
+                <COMMAND name="allowed" help="Set allowed VLANs">
+                        <COMMAND name="vlan" help="Add VLAN to trunk">
+                                <PARAM name="vlan_id" ptype="VLAN_ID" help="VLAN ID"/>
+                                <ACTION sym="script">bridge vlan add dev ${VIEW_NAME#config-if-} vid ${vlan_id} 2>/dev/null || echo "Bridge not configured"</ACTION>
+                        </COMMAND>
+                </COMMAND>
+        </COMMAND>
+</COMMAND>
+
+<COMMAND name="speed" help="Set interface speed">
+        <PARAM name="value" ptype="SPEED" help="10, 100, 1000, auto"/>
+        <ACTION sym="script">ethtool -s ${VIEW_NAME#config-if-} speed ${value} 2>/dev/null</ACTION>
+</COMMAND>
+
+<COMMAND name="duplex" help="Set interface duplex">
+        <PARAM name="mode" ptype="DUPLEX" help="full, half, auto"/>
+        <ACTION sym="script">ethtool -s ${VIEW_NAME#config-if-} duplex ${mode} 2>/dev/null</ACTION>
+</COMMAND>
+
+<COMMAND name="mtu" help="Set MTU size">
+        <PARAM name="size" ptype="PORT_NUM" help="MTU size"/>
+        <ACTION sym="script">ip link set ${VIEW_NAME#config-if-} mtu ${size}</ACTION>
+</COMMAND>
+
+<COMMAND name="end" help="Exit to enable mode">
+        <ACTION sym="nav">pop pop</ACTION>
+</COMMAND>
+
+<COMMAND name="exit" help="Exit to configuration mode">
+        <ACTION sym="nav">pop</ACTION>
+</COMMAND>
+
+</VIEW>
+
+<!-- ==================== VIEW: config-vlan ==================== -->
+<VIEW name="config-vlan-*">
+
+<PROMPT name="prompt">
+        <ACTION sym="prompt">%u@%h(config-vlan)# </ACTION>
+</PROMPT>
+
+<COMMAND name="name" help="Set VLAN name">
+        <PARAM name="vlan_name" ptype="STRING" help="VLAN name"/>
+        <ACTION sym="script">echo "vlan ${VIEW_NAME#config-vlan-} name ${vlan_name}" >> /etc/klish/switch.cfg</ACTION>
+</COMMAND>
+
+<COMMAND name="ip" help="Configure VLAN interface IP">
+        <COMMAND name="address" help="Set IP address">
+                <PARAM name="ip" ptype="STRING" help="IP address"/>
+                <PARAM name="mask" ptype="STRING" help="Netmask"/>
+                <ACTION sym="script">ip addr add ${ip}/${mask} dev vlan${VIEW_NAME#config-vlan-}</ACTION>
+        </COMMAND>
+</COMMAND>
+
+<COMMAND name="shutdown" help="Disable VLAN interface">
+        <ACTION sym="script">ip link set vlan${VIEW_NAME#config-vlan-} down</ACTION>
+</COMMAND>
+
+<COMMAND name="no shutdown" help="Enable VLAN interface">
+        <ACTION sym="script">ip link set vlan${VIEW_NAME#config-vlan-} up</ACTION>
+</COMMAND>
+
+<COMMAND name="end" help="Exit to enable mode">
+        <ACTION sym="nav">pop pop</ACTION>
+</COMMAND>
+
+<COMMAND name="exit" help="Exit to configuration mode">
+        <ACTION sym="nav">pop</ACTION>
+</COMMAND>
+
+</VIEW>
+
+<!-- ==================== VIEW: config-bond ==================== -->
+<VIEW name="config-bond-*">
+
+<PROMPT name="prompt">
+        <ACTION sym="prompt">%u@%h(config-bond)# </ACTION>
+</PROMPT>
+
+<COMMAND name="mode" help="Set bond mode">
+        <PARAM name="mode" ptype="LACP_MODE" help="active or passive"/>
+        <ACTION sym="script">echo "bond${VIEW_NAME#config-bond-} mode 4 lacp_rate ${mode}" >> /etc/klish/switch.cfg</ACTION>
+</COMMAND>
+
+<COMMAND name="interface" help="Add interface to bond">
+        <PARAM name="iface" ptype="STRING" help="Interface name"/>
+        <ACTION sym="script">ip link set ${iface} master bond${VIEW_NAME#config-bond-}</ACTION>
+</COMMAND>
+
+<COMMAND name="no" help="Remove configuration">
+        <COMMAND name="interface" help="Remove interface from bond">
+                <PARAM name="iface" ptype="STRING" help="Interface name"/>
+                <ACTION sym="script">ip link set ${iface} nomaster</ACTION>
+        </COMMAND>
+</COMMAND>
+
+<COMMAND name="shutdown" help="Disable bond">
+        <ACTION sym="script">ip link set bond${VIEW_NAME#config-bond-} down</ACTION>
+</COMMAND>
+
+<COMMAND name="no shutdown" help="Enable bond">
+        <ACTION sym="script">ip link set bond${VIEW_NAME#config-bond-} up</ACTION>
+</COMMAND>
+
+<COMMAND name="end" help="Exit to enable mode">
+        <ACTION sym="nav">pop pop</ACTION>
+</COMMAND>
+
+<COMMAND name="exit" help="Exit to configuration mode">
+        <ACTION sym="nav">pop</ACTION>
 </COMMAND>
 
 </VIEW>
