@@ -36,59 +36,77 @@
 <VIEW name="main">
 
 <PROMPT name="prompt">
-        <ACTION sym="prompt">%u@%h# </ACTION>
+        <ACTION sym="prompt">%u@%h&gt; </ACTION>
 </PROMPT>
 
+<HOTKEY key="^Z" cmd="exit"/>
+
 <!-- ==================== Диагностические команды ==================== -->
-<COMMAND name="show" help="Show system information">
-        <COMMAND name="version" help="Show system version">
-                <ACTION sym="script">cat /etc/os-release | head -3; uname -a</ACTION>
+<COMMAND name="show" help="Show system information" mode="switch" container="true">
+    <COMMAND name="version" help="Show system version">
+        <ACTION sym="script">cat /etc/os-release | head -3; uname -a</ACTION>
+    </COMMAND>
+    
+    <COMMAND name="running-config" help="Show current running configuration">
+        <ACTION sym="script">cat /etc/klish/running.cfg 2>/dev/null || echo "No config file"</ACTION>
+    </COMMAND>
+
+    <COMMAND name="startup-config" help="Show current startup configuration">
+        <ACTION sym="script">cat /etc/klish/startup.cfg 2>/dev/null || echo "No config file"</ACTION>
+    </COMMAND>
+    
+    <COMMAND name="interfaces" help="Show interface status">
+        <ACTION sym="script">ip link show</ACTION>
+    </COMMAND>
+    
+    <COMMAND name="interface" help="Show specific interface details">
+        <PARAM name="iface" ptype="STRING" help="Interface name">
+                <COMPL>
+                        <ACTION sym="script">
+                        ip link show | grep -E "^[0-9]+:" | cut -d: -f2 | tr -d ' ' | grep -v lo
+                        </ACTION>
+                </COMPL>
+        </PARAM>
+        <ACTION sym="script">ip addr show "${KLISH_PARAM_iface}" 2>/dev/null || echo "Interface ${iface} not found"</ACTION>
+    </COMMAND>
+    
+    <COMMAND name="mac-address-table" help="Show MAC address table">
+        <ACTION sym="script">bridge fdb show 2>/dev/null || echo "Bridge not configured"</ACTION>
+    </COMMAND>
+    
+    <COMMAND name="arp" help="Show ARP table">
+        <ACTION sym="script">ip neigh show</ACTION>
+    </COMMAND>
+    
+    <COMMAND name="statistics" help="Show interface statistics" mode="switch" container="true">
+        <COMMAND name="all" help="Show all interfaces statistics">
+            <ACTION sym="script">ip -s link show</ACTION>
         </COMMAND>
-        
-        <COMMAND name="running-config" help="Show current running configuration">
-                <ACTION sym="script">cat /etc/klish/switch.cfg 2>/dev/null || echo "No config file"</ACTION>
+        <COMMAND name="interface" help="Show statistics for specific interface">
+            <PARAM name="iface" ptype="STRING" help="Interface name">
+                <COMPL>
+                        <ACTION sym="script">
+                        ip link show | grep -E "^[0-9]+:" | cut -d: -f2 | tr -d ' ' | grep -v lo
+                        </ACTION>
+                </COMPL>
+            </PARAM>
+            <ACTION sym="script">ip -s link show "${KLISH_PARAM_iface}" 2>/dev/null || echo "Interface ${iface} not found"</ACTION>
         </COMMAND>
-        
-        <COMMAND name="interfaces" help="Show interface status">
-                <ACTION sym="script">ip link show | grep -E "^[0-9]+:"</ACTION>
-        </COMMAND>
-        
-        <COMMAND name="interface" help="Show specific interface details">
-                <PARAM name="iface" ptype="STRING" help="Interface name (eth0, eth1, etc)"/>
-                <ACTION sym="script">ip addr show ${iface} 2>/dev/null || echo "Interface ${iface} not found"</ACTION>
-        </COMMAND>
-        
-        <COMMAND name="mac-address-table" help="Show MAC address table">
-                <ACTION sym="script">bridge fdb show 2>/dev/null || echo "Bridge not configured"</ACTION>
-        </COMMAND>
-        
-        <COMMAND name="arp" help="Show ARP table">
-                <ACTION sym="script">ip neigh show</ACTION>
-        </COMMAND>
-        
-        <COMMAND name="statistics" help="Show interface statistics">
-                <COMMAND name="all" help="Show all interfaces statistics">
-                        <ACTION sym="script">ip -s link show</ACTION>
-                </COMMAND>
-                <COMMAND name="interface" help="Show statistics for specific interface">
-                        <PARAM name="iface" ptype="STRING" help="Interface name"/>
-                        <ACTION sym="script">ip -s link show ${iface} 2>/dev/null || echo "Interface ${iface} not found"</ACTION>
-                </COMMAND>
-        </COMMAND>
-        
-        <COMMAND name="vlan" help="Show VLAN information">
-                <ACTION sym="script">ip link show type vlan 2>/dev/null || echo "No VLANs configured"</ACTION>
-        </COMMAND>
-        
-        <COMMAND name="lacp" help="Show LACP status">
-                <ACTION sym="script">cat /proc/net/bonding/bond0 2>/dev/null || echo "No LACP bond configured"</ACTION>
-        </COMMAND>
+    </COMMAND>
+    
+    <COMMAND name="vlan" help="Show VLAN information">
+        <ACTION sym="script">ip link show type vlan 2>/dev/null || echo "No VLANs configured"</ACTION>
+    </COMMAND>
+    
+    <COMMAND name="lacp" help="Show LACP status">
+        <ACTION sym="script">cat /proc/net/bonding/bond0 2>/dev/null || echo "No LACP bond configured"</ACTION>
+    </COMMAND>
 </COMMAND>
 
 <!-- ==================== Команды диагностики ==================== -->
 <COMMAND name="ping" help="Ping a host">
-        <PARAM name="host" ptype="STRING" help="IP address"/>
-        <ACTION sym="script">ping -c 4 ${host}</ACTION>
+    <PARAM name="host" ptype="STRING" help="IP address or hostname"/>
+    <ACTION sym="script">ping "${KLISH_PARAM_host}"</ACTION>
 </COMMAND>
 
 <COMMAND name="traceroute" help="Trace route to host">
@@ -107,29 +125,37 @@
 
 <!-- ==================== Команды настройки портов ==================== -->
 <COMMAND name="interface" help="Configure interface">
-        <PARAM name="iface" ptype="STRING" help="Interface name (eth0, eth1, etc)"/>
-        <COMMAND name="shutdown" help="Disable interface">
-                <ACTION sym="script">ip link set ${iface} down</ACTION>
-        </COMMAND>
-        <COMMAND name="no shutdown" help="Enable interface">
-                <ACTION sym="script">ip link set ${iface} up</ACTION>
-        </COMMAND>
-        <COMMAND name="description" help="Set interface description">
-                <PARAM name="text" ptype="STRING" help="Description text"/>
-                <ACTION sym="script">echo "interface ${iface} description ${text}" >> /etc/klish/switch.cfg</ACTION>
-        </COMMAND>
-        <COMMAND name="speed" help="Set interface speed">
-                <PARAM name="value" ptype="SPEED" help="10, 100, 1000, auto"/>
-                <ACTION sym="script">ethtool -s ${iface} speed ${value} 2>/dev/null || echo "ethtool not available"</ACTION>
-        </COMMAND>
-        <COMMAND name="duplex" help="Set interface duplex mode">
-                <PARAM name="mode" ptype="DUPLEX" help="full, half, auto"/>
-                <ACTION sym="script">ethtool -s ${iface} duplex ${mode} 2>/dev/null || echo "ethtool not available"</ACTION>
-        </COMMAND>
-        <COMMAND name="mtu" help="Set MTU size">
-                <PARAM name="size" ptype="PORT_NUM" help="MTU size (68-1500)"/>
-                <ACTION sym="script">ip link set ${iface} mtu ${size}</ACTION>
-        </COMMAND>
+        <PARAM name="iface" ptype="STRING" help="Interface name (eth0, eth1, etc)">
+                <COMPL>
+                        <ACTION sym="script">
+                                ip link show | grep -E "^[0-9]+:" | cut -d: -f2 | tr -d ' ' | grep -v lo
+                        </ACTION>
+                </COMPL>
+        </PARAM>
+        <SWITCH name="interface-config">
+                <COMMAND name="shutdown" help="Disable interface">
+                        <ACTION sym="script">ip link set "${KLISH_PARAM_iface}" down</ACTION>
+                </COMMAND>
+                <COMMAND name="no shutdown" help="Enable interface">
+                        <ACTION sym="script">ip link set "${KLISH_PARAM_iface}" up</ACTION>
+                </COMMAND>
+                <COMMAND name="description" help="Set interface description">
+                        <PARAM name="text" ptype="STRING" help="Description text"/>
+                        <ACTION sym="script">echo "interface ${iface} description ${text}" >> /etc/klish/switch.cfg</ACTION>
+                </COMMAND>
+                <COMMAND name="speed" help="Set interface speed">
+                        <PARAM name="value" ptype="SPEED" help="10, 100, 1000, auto"/>
+                        <ACTION sym="script">ethtool -s "${iface}" speed "${value}" 2>/dev/null || echo "ethtool not available"</ACTION>
+                </COMMAND>
+                <COMMAND name="duplex" help="Set interface duplex mode">
+                        <PARAM name="mode" ptype="DUPLEX" help="full, half, auto"/>
+                        <ACTION sym="script">ethtool -s "${iface}" duplex "${mode}" 2>/dev/null || echo "ethtool not available"</ACTION>
+                </COMMAND>
+                <COMMAND name="mtu" help="Set MTU size">
+                        <PARAM name="size" ptype="PORT_NUM" help="MTU size (68-1500)"/>
+                        <ACTION sym="script">ip link set "${iface}" mtu "${size}"</ACTION>
+                </COMMAND>
+        </SWITCH>
 </COMMAND>
 
 <!-- ==================== Команды настройки VLAN ==================== -->
