@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup.sh - Подготовка окружения: сборка libxml2, faux и установка FreeRADIUS через apt
+# setup.sh - Подготовка окружения: сборка libxml2, faux, libyang, sysrepo и установка FreeRADIUS
 
 set -e  # Прерывать выполнение при ошибке
 
@@ -86,12 +86,13 @@ clone_or_update_repo() {
 }
 
 # --- 0. Установка системных зависимостей для сборки ---
-echo "=== Шаг 0: Установка инструментов сборки и FreeRADIUS ==="
+echo "=== Шаг 0: Установка инструментов сборки и зависимостей ==="
 
-# Устанавливаем инструменты сборки и зависимости
+# Устанавливаем инструменты сборки и зависимости для libyang/sysrepo
 sudo apt update
 sudo apt install -y build-essential git wget pkg-config autoconf automake libtool \
     libtalloc-dev libssl-dev libpam0g-dev libmysqlclient-dev libpq-dev libsqlite3-dev \
+    cmake doxygen python3-dev python3-pip swig libpcre2-dev libcurl4-openssl-dev \
     freeradius freeradius-mysql freeradius-utils
 
 # --- 1. Скачивание исходных кодов ---
@@ -113,8 +114,16 @@ KLISH_DIR="klish-3.2.0"
 download_if_needed "$KLISH_URL"
 extract_tarball "$KLISH_ARCHIVE" "$KLISH_DIR"
 
+# libyang (парсер YANG)
+LIBYANG_REPO="https://github.com/CESNET/libyang.git"
+clone_or_update_repo "$LIBYANG_REPO" "$SRC_DIR/libyang"
+
+# sysrepo (хранилище конфигурации)
+SYSREPO_REPO="https://github.com/sysrepo/sysrepo.git"
+clone_or_update_repo "$SYSREPO_REPO" "$SRC_DIR/sysrepo"
+
 # --- 2. Сборка зависимостей для целевой архитектуры ---
-echo "=== Шаг 2: Сборка зависимостей (libxml2, faux) ==="
+echo "=== Шаг 2: Сборка зависимостей (libxml2, faux, libyang, sysrepo) ==="
 
 # Установка переменных окружения
 export CFLAGS="-I$PREFIX/include"
@@ -128,7 +137,6 @@ cd "$SRC_DIR/libxml2-2.12.6"
 ./configure --prefix="$PREFIX" --host="$TARGET_ARCH" --without-python --disable-static
 make -j$(nproc)
 make install
-# Проверка успешности
 if [ ! -f "$PREFIX/lib/libxml2.so" ] && [ ! -f "$PREFIX/lib/libxml2.a" ]; then
     echo "Ошибка: libxml2 не собралась"
     exit 1
@@ -146,7 +154,6 @@ fi
 ./configure --prefix="$PREFIX" --host="$TARGET_ARCH"
 make -j$(nproc)
 make install
-# Проверка успешности
 if [ ! -f "$PREFIX/lib/libfaux.so" ] && [ ! -f "$PREFIX/lib/libfaux.a" ]; then
     echo "Ошибка: faux не собралась"
     exit 1
@@ -154,15 +161,63 @@ fi
 cd - > /dev/null
 echo "✅ faux собрана"
 
+# Сборка libyang
+echo "Компиляция libyang для $TARGET_ARCH..."
+cd "$SRC_DIR/libyang"
+mkdir -p build && cd build
+cmake -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+      -DCMAKE_C_COMPILER="${CC:-gcc}" \
+      -DCMAKE_CXX_COMPILER="${CXX:-g++}" \
+      -DCMAKE_SYSTEM_NAME=Linux \
+      -DCMAKE_C_FLAGS="$CFLAGS" \
+      -DCMAKE_CXX_FLAGS="$CFLAGS" \
+      -DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS" \
+      -DCMAKE_SHARED_LINKER_FLAGS="$LDFLAGS" \
+      -DCMAKE_MODULE_LINKER_FLAGS="$LDFLAGS" \
+      -DENABLE_BUILD_TESTS=OFF \
+      -DENABLE_BUILD_TOOLS=ON ..
+make -j$(nproc)
+make install
+cd - > /dev/null
+echo "✅ libyang собрана"
+
+# Сборка sysrepo
+echo "Компиляция sysrepo для $TARGET_ARCH..."
+cd "$SRC_DIR/sysrepo"
+mkdir -p build && cd build
+cmake -DCMAKE_INSTALL_PREFIX=/home/arm/klish-build/build_root \
+      -DCMAKE_C_COMPILER=gcc \
+      -DCMAKE_CXX_COMPILER=g++ \
+      -DCMAKE_SYSTEM_NAME=Linux \
+      -DGEN_LANGUAGE_BINDINGS=ON \
+      -DGEN_CPP_BINDINGS=ON \
+      -DENABLE_TESTS=OFF \
+      -DENABLE_CACHE=ON \
+      -DPRINTED_CONTEXT_ADDRESS=1 ..
+make -j$(nproc)
+make install
+cd - > /dev/null
+echo "✅ sysrepo собрана"
+
+# Обновление кэша библиотек (для нативной сборки)
+if [ $IS_CROSS -eq 0 ]; then
+    sudo ldconfig
+fi
+
 echo "=== Подготовка завершена ==="
 echo ""
 echo "📦 Зависимости собраны и установлены в: $PREFIX"
 echo "   - libxml2: $(ls $PREFIX/lib/libxml2.* 2>/dev/null | head -1 || echo 'не найдена')"
 echo "   - faux: $(ls $PREFIX/lib/libfaux.* 2>/dev/null | head -1 || echo 'не найдена')"
+echo "   - libyang: $(ls $PREFIX/lib/libyang.* 2>/dev/null | head -1 || echo 'не найдена')"
+echo "   - sysrepo: $(ls $PREFIX/lib/libsysrepo.* 2>/dev/null | head -1 || echo 'не найдена')"
 echo ""
 echo "📦 FreeRADIUS установлен через apt:"
 echo "   - $(freeradius -v 2>/dev/null | head -1 || echo 'проверьте установку')"
 echo ""
-echo "📁 Исходники klish-3.2.0: $SRC_DIR/klish-3.2.0"
+echo "📁 Исходники:"
+echo "   - klish-3.2.0: $SRC_DIR/klish-3.2.0"
+echo "   - libyang: $SRC_DIR/libyang"
+echo "   - sysrepo: $SRC_DIR/sysrepo"
 echo ""
 echo "▶️  Теперь запустите: ./build.sh"

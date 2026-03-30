@@ -1,5 +1,5 @@
 #!/bin/bash
-# install.sh - Установка klish на целевое устройство
+# install.sh - Установка klish на целевое устройство с полной поддержкой YANG/sysrepo
 # Запускать с правами root
 
 set -e
@@ -17,7 +17,6 @@ echo "Целевая архитектура: $TARGET_ARCH"
 FINAL_DIR=$(find . -maxdepth 1 -type d -name "klish-build-*" | grep "$TARGET_ARCH" | sort | tail -1)
 
 if [ -z "$FINAL_DIR" ]; then
-    # Если папка с архитектурой не найдена, ищем любую
     FINAL_DIR=$(find . -maxdepth 1 -type d -name "klish-build-*" | sort | tail -1)
 fi
 
@@ -29,89 +28,159 @@ fi
 
 echo "Установка klish из $FINAL_DIR"
 
-# --- Проверка наличия библиотек ---
-echo "=== Проверка собранных библиотек ==="
-if [ -d "$FINAL_DIR/lib" ]; then
-    echo "Библиотеки в $FINAL_DIR/lib:"
-    ls -la "$FINAL_DIR/lib" | grep -E "libklish|libxml2|libtinyrl" || echo "  (нет библиотек klish)"
-else
-    echo "Предупреждение: папка lib не найдена в $FINAL_DIR"
-fi
-
-# --- Бэкап существующих конфигов (опционально) ---
-BACKUP_DIR="/root/klish_backup_$(date +%Y%m%d_%H%M%S)"
-if [ -d "/etc/klish" ] && [ "$(ls -A /etc/klish 2>/dev/null)" ]; then
-    echo "Создание бэкапа существующей конфигурации в $BACKUP_DIR"
-    mkdir -p "$BACKUP_DIR"
-    cp -r /etc/klish "$BACKUP_DIR/"
-fi
-
-# --- Копирование бинарных файлов ---
+# --- 1. Установка бинарных файлов klish ---
+echo "=== Установка исполняемых файлов ==="
 if [ -d "$FINAL_DIR/bin" ]; then
-    echo "Копирование исполняемых файлов..."
     cp -v "$FINAL_DIR"/bin/* /usr/local/bin/
 fi
 
-# --- Копирование библиотек в /usr/lib ---
+# --- 2. Установка библиотек klish, libyang, sysrepo ---
+echo "=== Установка библиотек ==="
 if [ -d "$FINAL_DIR/lib" ]; then
-    echo "Копирование библиотек в /usr/lib..."
-    
-    # Копируем все библиотеки
-    cp -v "$FINAL_DIR"/lib/*.so* /usr/lib/ 2>/dev/null || true
-    cp -v "$FINAL_DIR"/lib/*.a /usr/lib/ 2>/dev/null || true
-    
-    # Обновляем кэш библиотек
-    echo "Обновление кэша библиотек..."
-    ldconfig
-    
-    # Проверка, что библиотеки скопированы
-    echo "Проверка библиотек в /usr/lib:"
-    ls -la /usr/lib | grep -E "libklish|libxml2|libtinyrl" | head -10 || echo "  (библиотеки не найдены)"
+    # Копируем все разделяемые библиотеки
+    for lib in "$FINAL_DIR"/lib/*.so*; do
+        [ -f "$lib" ] && cp -v "$lib" /usr/local/lib/ 2>/dev/null || true
+    done
+    # Копируем статические библиотеки
+    for lib in "$FINAL_DIR"/lib/*.a; do
+        [ -f "$lib" ] && cp -v "$lib" /usr/local/lib/ 2>/dev/null || true
+    done
 fi
 
-# --- Копирование конфигурации ---
-if [ -d "$FINAL_DIR/etc/klish" ]; then
-    echo "Копирование конфигурации в /etc/klish..."
-    mkdir -p /etc/klish
-    
-    # Копируем, но не перезаписываем существующие файлы, если не указано иное
-    if [ "$OVERWRITE_CONFIG" = "yes" ]; then
-        cp -rv "$FINAL_DIR"/etc/klish/* /etc/klish/
-    else
-        cp -rvn "$FINAL_DIR"/etc/klish/* /etc/klish/ 2>/dev/null || true
-        echo "Примечание: существующие файлы конфигурации сохранены."
-        echo "Для перезаписи установите переменную OVERWRITE_CONFIG=yes"
-    fi
+# --- 3. Установка утилит sysrepo (из собранной папки, если есть) ---
+echo "=== Установка утилит sysrepo ==="
+if [ -f "$FINAL_DIR/bin/sysrepod" ]; then
+    cp -v "$FINAL_DIR"/bin/sysrepod /usr/local/bin/
+    cp -v "$FINAL_DIR"/bin/sysrepoctl /usr/local/bin/
+    cp -v "$FINAL_DIR"/bin/sysrepocfg /usr/local/bin/
+elif [ -d "/home/arm/klish-build/src/sysrepo/build/bin" ]; then
+    # Если утилиты собраны, но не скопированы в FINAL_DIR
+    cp -v /home/arm/klish-build/src/sysrepo/build/bin/sysrepod /usr/local/bin/
+    cp -v /home/arm/klish-build/src/sysrepo/build/bin/sysrepoctl /usr/local/bin/
+    cp -v /home/arm/klish-build/src/sysrepo/build/bin/sysrepocfg /usr/local/bin/
+else
+    echo "⚠️  Утилиты sysrepo не найдены, попробуем установить через apt"
+    apt update && apt install -y sysrepo sysrepo-plugind 2>/dev/null || true
 fi
 
-# --- Настройка прав доступа к сокету в конфиге ---
-if [ -f "/etc/klish/klishd.conf" ]; then
-    # Убеждаемся, что сокет создаётся с правильными правами
-    if ! grep -q "UnixSocketMode=0666" /etc/klish/klishd.conf; then
-        echo "Добавление UnixSocketMode=0666 в конфиг..."
-        echo "UnixSocketMode=0666" >> /etc/klish/klishd.conf
-    fi
+# --- 4. Установка YANG-моделей ---
+echo "=== Установка YANG-моделей ==="
+mkdir -p /usr/local/share/yang/modules
+
+# Копируем модели из собранной папки
+if [ -d "$FINAL_DIR/share/yang/modules" ]; then
+    cp -rv "$FINAL_DIR"/share/yang/modules/* /usr/local/share/yang/modules/ 2>/dev/null || true
+fi
+
+# Копируем модели из libyang (если есть)
+if [ -d "/home/arm/klish-build/src/libyang/build/install/share/yang/modules" ]; then
+    cp -rv /home/arm/klish-build/src/libyang/build/install/share/yang/modules/* /usr/local/share/yang/modules/ 2>/dev/null || true
+fi
+
+# Копируем модели из sysrepo (если есть)
+if [ -d "/home/arm/klish-build/src/sysrepo/build/install/share/yang/modules" ]; then
+    cp -rv /home/arm/klish-build/src/sysrepo/build/install/share/yang/modules/* /usr/local/share/yang/modules/ 2>/dev/null || true
+fi
+
+# --- 5. Создание примера YANG-модели для теста ---
+echo "=== Создание примера YANG-модели ==="
+cat > /tmp/example-interfaces.yang << 'EOF'
+module example-interfaces {
+    namespace "urn:example:interfaces";
+    prefix "exif";
+
+    container interfaces {
+        list interface {
+            key "name";
+            leaf name {
+                type string;
+            }
+            leaf enabled {
+                type boolean;
+                default true;
+            }
+            leaf description {
+                type string;
+            }
+        }
+    }
+}
+EOF
+
+# --- 6. Настройка sysrepo (запуск демона и установка моделей) ---
+echo "=== Настройка sysrepo ==="
+
+# Запускаем sysrepod, если не запущен
+if ! pgrep -x "sysrepod" > /dev/null; then
+    echo "Запуск sysrepod..."
+    sysrepod -d &
+    sleep 2
+fi
+
+# Устанавливаем YANG-модели в sysrepo
+if command -v sysrepoctl &> /dev/null; then
+    echo "Установка YANG-моделей в sysrepo..."
+    # Устанавливаем пример интерфейсов
+    sysrepoctl -i -g /tmp/example-interfaces.yang -o root -g root 2>/dev/null || true
     
-    # Проверка пути к XML
-    if grep -q "DBs=libxml2" /etc/klish/klishd.conf; then
-        XML_PATH=$(grep "DB.libxml2.XMLPath" /etc/klish/klishd.conf | cut -d= -f2)
-        if [ -n "$XML_PATH" ] && [ ! -f "$XML_PATH" ]; then
-            echo "Предупреждение: XML-файл не найден по пути: $XML_PATH"
-            echo "Проверьте конфигурацию в /etc/klish/klishd.conf"
+    # Устанавливаем стандартные модели IETF (если есть)
+    for yang in /usr/local/share/yang/modules/*.yang; do
+        if [ -f "$yang" ]; then
+            echo "Установка $(basename "$yang")..."
+            sysrepoctl -i -g "$yang" -o root -g root 2>/dev/null || true
         fi
-    fi
+    done
+else
+    echo "⚠️  sysrepoctl не найден, модели не установлены"
 fi
 
-# --- Создание systemd unit для автозапуска ---
-if [ -f /usr/local/bin/klishd ]; then
-    echo "Создание systemd unit для klishd..."
-    cat > /etc/systemd/system/klishd.service << 'EOF'
+# --- 7. Настройка конфигурации klishd ---
+echo "=== Настройка klishd.conf ==="
+mkdir -p /etc/klish
+
+# Создаём конфиг для sysrepo
+cat > /etc/klish/klishd.conf << 'EOF'
+# Основные настройки
+UnixSocketPath=/tmp/klishd.sock
+UnixSocketMode=0666
+
+# Путь к плагинам
+PluginPath=/usr/local/lib
+
+# База данных sysrepo (для YANG-моделей)
+DBs=sysrepo
+DB.sysrepo.YANGPath=/usr/local/share/yang/modules
+
+# libxml2 (оставляем для обратной совместимости, но отключаем)
+# DBs=libxml2
+# DB.libxml2.XMLPath=/etc/klish/simple.xml
+EOF
+
+# --- 8. Настройка klish.conf для клиента ---
+cat > /etc/klish/klish.conf << 'EOF'
+UnixSocketPath=/tmp/klishd.sock
+Pager="/usr/bin/less -I -F -e -X -K -d -R"
+UsePager=y
+HistorySize=100
+Completion=true
+HistoryFile=/tmp/klish_history
+EOF
+
+# --- 9. Обновление кэша библиотек ---
+echo "=== Обновление кэша библиотек ==="
+ldconfig
+
+# --- 10. Создание systemd unit для klishd ---
+echo "=== Создание systemd unit для klishd ==="
+cat > /etc/systemd/system/klishd.service << 'EOF'
 [Unit]
 Description=Klish Configuration Daemon
-After=network.target
+After=network.target sysrepo.service
+Wants=sysrepo.service
 
 [Service]
 Type=simple
+Environment="LD_LIBRARY_PATH=/usr/local/lib"
 ExecStart=/usr/local/bin/klishd -d
 ExecStartPost=/bin/chmod 666 /tmp/klishd.sock
 Restart=on-failure
@@ -122,71 +191,87 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl daemon-reload
-    systemctl restart klishd.service
-    echo ""
-    echo "Для автозапуска выполните: systemctl enable klishd"
-    echo "Для запуска сейчас: systemctl start klishd"
-else
-    echo "Предупреждение: klishd не найден, systemd unit не создан"
-fi
 
-# --- Проверка установки ---
+# --- 11. Создание systemd unit для sysrepod ---
+cat > /etc/systemd/system/sysrepo.service << 'EOF'
+[Unit]
+Description=Sysrepo Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sysrepod -d
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+
+# --- 12. Запуск сервисов ---
+echo "=== Запуск сервисов ==="
+systemctl restart sysrepo.service 2>/dev/null || true
+systemctl restart klishd.service 2>/dev/null || true
+
+# --- 13. Проверка установки ---
 echo ""
-echo "=== Проверка установки ==="
-if command -v klishd &> /dev/null; then
-    echo "✅ klishd: $(which klishd)"
-else
-    echo "❌ klishd не найден в PATH"
-fi
+echo "=== ПРОВЕРКА УСТАНОВКИ ==="
 
-if command -v klish &> /dev/null; then
-    echo "✅ klish: $(which klish)"
-else
-    echo "❌ klish не найден в PATH"
-fi
-
-# Проверка библиотек (только разделяемые)
-echo ""
-echo "=== Проверка библиотек ==="
-for lib in libklish.so libklish-db-libxml2.so libxml2.so; do
-    if ldconfig -p | grep -q "$lib"; then
-        echo "✅ $lib найден"
+# Проверка бинарных файлов
+for bin in klish klishd sysrepod sysrepoctl; do
+    if command -v $bin &> /dev/null; then
+        echo "✅ $bin: $(which $bin)"
     else
-        echo "❌ $lib не найден в кэше библиотек"
+        echo "❌ $bin не найден"
     fi
 done
 
-# Проверка плагина libxml2
-if [ -f "/usr/lib/libklish-db-libxml2.so" ]; then
-    echo "✅ Плагин libxml2 установлен"
-else
-    echo "❌ Плагин libxml2 не найден в /usr/lib/"
-    echo "   Возможно, нужно пересобрать klish с --with-libxml2"
-fi
-
-# --- Установка FreeRADIUS (опционально) ---
-if [ -f "$FINAL_DIR/install_radius.sh" ]; then
-    echo ""
-    echo "=== FreeRADIUS ==="
-    echo "Для установки FreeRADIUS выполните:"
-    echo "  cd $FINAL_DIR && sudo ./install_radius.sh"
-    echo ""
-fi
-
+# Проверка библиотек
 echo ""
-echo "=== Установка завершена ==="
+echo "Проверка библиотек:"
+for lib in libklish.so libsysrepo.so libyang.so; do
+    if ldconfig -p | grep -q "$lib"; then
+        echo "✅ $lib найден в кэше"
+    elif [ -f "/usr/local/lib/$lib" ]; then
+        echo "✅ $lib найден (файл присутствует)"
+    else
+        echo "⚠️  $lib не найден"
+    fi
+done
+
+# Проверка YANG-моделей
+echo ""
+echo "YANG-модели в sysrepo:"
+if command -v sysrepoctl &> /dev/null; then
+    sysrepoctl -l 2>/dev/null | head -10 || echo "  (нет установленных моделей)"
+else
+    echo "  sysrepoctl не доступен"
+fi
+
+# Проверка работы klish
+echo ""
+echo "=== ГОТОВО ==="
 echo ""
 echo "Для запуска демона:"
+echo "  sudo systemctl start klishd"
+echo "  # или"
 echo "  sudo klishd -d"
 echo ""
 echo "Для запуска клиента:"
 echo "  klish"
 echo ""
+echo "Для работы с YANG-моделями:"
+echo "  klish"
+echo "  > configure"
+echo "  [edit] # set interfaces interface eth0 description 'Uplink'"
+echo "  [edit] # commit"
+echo "  [edit] # show"
+echo ""
+echo "Для просмотра установленных YANG-моделей:"
+echo "  sysrepoctl -l"
+echo ""
 echo "Для автозапуска при загрузке:"
 echo "  sudo systemctl enable klishd"
-echo "  sudo systemctl start klishd"
-echo ""
-echo "Если демон не запускается с ошибкой 'libklish-db-libxml2.so: cannot open':"
-echo "  sudo ldconfig"
-echo "  sudo klishd -d"
+echo "  sudo systemctl enable sysrepo"

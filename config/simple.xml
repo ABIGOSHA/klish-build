@@ -111,10 +111,10 @@
 
 <COMMAND name="traceroute" help="Trace route to host">
         <PARAM name="host" ptype="STRING" help="IP address"/>
-        <ACTION sym="script">traceroute -n ${host}</ACTION>
+        <ACTION sym="script">traceroute -n ${KLISH_PARAM_host}</ACTION>
 </COMMAND>
 
-<COMMAND name="clear" help="Clear counters or tables">
+<COMMAND name="clear" help="Clear counters or tables" mode="switch" container="true">
         <COMMAND name="arp" help="Clear ARP cache">
                 <ACTION sym="script">ip neigh flush all</ACTION>
         </COMMAND>
